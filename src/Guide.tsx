@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { FOREMAN_OBJECTS, MAT, OBJ, OBJECTS, REASON, SUPPLIERS } from './data'
 import { availableQty, forgotten, stageTpl, surplus, type Card, type ChatId, type State } from './model'
 import type { Tab } from './Panel'
@@ -345,4 +347,64 @@ export function currentHl(step: number, ctx: Ctx): Hl {
   const st = STEPS[step]
   if (st.done(ctx)) return {}
   return st.tasks(ctx).find(t => !t.done)?.hl ?? {}
+}
+
+// Мобильная версия: компактная плашка шага сверху и шторка с результатом снизу
+export function MobileGuide({ step, ctx, onNext, onRestart, onFree, onGoto }: { step: number; ctx: Ctx; onNext: () => void; onRestart: () => void; onFree: () => void; onGoto: (i: number) => void }) {
+  const st = STEPS[step]
+  const tasks = st.tasks(ctx)
+  const cur = tasks.findIndex(t => !t.done)
+  const done = st.done(ctx)
+  const last = step === STEPS.length - 1
+  const stuck = !done ? st.stuck?.(ctx) : undefined
+  const [more, setMore] = useState(false)
+  const [sheet, setSheet] = useState(false)
+  // результат показываем сам, когда действие выполнено: сначала видно ответ системы, потом объяснение
+  useEffect(() => {
+    if (!done) { setSheet(false); return }
+    const t = window.setTimeout(() => setSheet(true), 1100)
+    return () => clearTimeout(t)
+  }, [done, step])
+  useEffect(() => setMore(false), [step])
+
+  return (
+    <>
+      <div className={`mguide ${done ? 'is-done' : ''}`}>
+        <div className="mg-row">
+          <span className="g-count">Шаг {step + 1} из {STEPS.length}</span>
+          <button className="mg-more" onClick={() => setMore(!more)} aria-expanded={more}>{more ? 'Свернуть' : 'Подробнее'}</button>
+        </div>
+        <div className="mg-title">{st.title}</div>
+        {more && (
+          <>
+            <div className="g-who">{st.who}</div>
+            <p className="g-intro">{st.intro}</p>
+            <ol className="g-tasks">
+              {tasks.map((t, i) => (
+                <li key={i} className={t.done ? 'done' : i === cur ? 'now' : ''}><span className="tick" aria-hidden>{t.done ? '✓' : i + 1}</span><span>{t.text}</span></li>
+              ))}
+            </ol>
+          </>
+        )}
+        {!more && stuck && <div className="mg-task">{stuck} <button className="btn small primary" onClick={() => onGoto(0)}>К шагу 1</button></div>}
+        {!more && !stuck && !done && cur >= 0 && (
+          <div className="mg-task"><span className="tick" aria-hidden>{cur + 1}</span>{tasks[cur].text}</div>
+        )}
+        {done && <button className="btn primary small mg-done" onClick={() => setSheet(true)}>Готово — что произошло?</button>}
+      </div>
+      {sheet && done && createPortal(
+        <div className="sheet-back" onClick={() => setSheet(false)}>
+          <div className="sheet" role="dialog" aria-label="Что произошло в системе" onClick={e => e.stopPropagation()}>
+            <div className="sheet-grip" aria-hidden />
+            <b>Что произошло в системе</b>
+            <ul>{st.result(ctx).map((r, i) => <li key={i}>{r}</li>)}</ul>
+            {!last && <button className="btn primary" onClick={() => { setSheet(false); onNext() }}>Следующий шаг: {STEPS[step + 1].title.toLowerCase()}</button>}
+            {last && <><button className="btn primary" onClick={onRestart}>Пройти заново</button><button className="btn" onClick={onFree}>Свободный режим</button></>}
+            <button className="btn sheet-close" onClick={() => setSheet(false)}>Посмотреть экран</button>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  )
 }

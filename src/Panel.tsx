@@ -129,6 +129,7 @@ function House({ s, id, setId, hl, onOpenStage }: { s: State; id: string; setId:
       {o.customerChanges && (
         <div className="change-note">Изменения покупателя (не считаются перерасходом): {o.customerChanges.map(c => `этап ${c.stage}: ${MAT[c.mat].name} +${q(c.mat, c.delta)}`).join('; ')}. {o.customerChanges[0].note}.</div>
       )}
+      <p className="m-hint">Таблицу можно листать вбок, этап раскрывается нажатием</p>
       <div className="tbl-wrap">
         <table className="tbl">
           <thead>

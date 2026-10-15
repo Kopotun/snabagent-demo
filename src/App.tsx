@@ -3,7 +3,7 @@ import { initState, reducer, type Action } from './bot'
 import type { ChatId, Msg, State } from './model'
 import { Panel, type Tab } from './Panel'
 import { MessageView, Phone, type Chip } from './Phone'
-import { currentHl, GuideCard, SAMPLE_LEFTOVERS, SAMPLE_REQUEST, Stepper, STEPS as TOUR } from './Guide'
+import { currentHl, GuideCard, MobileGuide, SAMPLE_LEFTOVERS, SAMPLE_REQUEST, Stepper, STEPS as TOUR } from './Guide'
 
 const STORE_KEY = 'snabagent-demo-v1'
 
@@ -150,7 +150,20 @@ function loadGuide(): { mode: 'guided' | 'free'; step: number } {
   return { mode: 'guided', step: 0 }
 }
 
+function useMobile() {
+  const q = '(max-width: 760px)'
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(q)
+    const on = () => setM(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return m
+}
+
 function Demo() {
+  const mobile = useMobile()
   const [s, dispatch] = useReducer(reducer, undefined, load)
   const [guide, setGuide] = useState(loadGuide)
   const [chat, setChat] = useState<ChatId>('foreman')
@@ -260,14 +273,23 @@ function Demo() {
             <Stepper step={step} maxDone={step} />
             <div className="tour">
               <aside className="tour-guide">
-                <GuideCard
+                {mobile ? (
+                  <MobileGuide
+                    step={step}
+                    ctx={ctx}
+                    onNext={() => { setGuide({ ...guide, step: step + 1 }); document.querySelector('.stepper')?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }}
+                    onRestart={restart}
+                    onFree={() => setGuide({ ...guide, mode: 'free' })}
+                    onGoto={i => setGuide({ ...guide, step: i })}
+                  />
+                ) : <GuideCard
                   step={step}
                   ctx={ctx}
                   onNext={() => { setGuide({ ...guide, step: step + 1 }); document.querySelector('.stepper')?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }}
                   onRestart={restart}
                   onFree={() => setGuide({ ...guide, mode: 'free' })}
                   onGoto={i => setGuide({ ...guide, step: i })}
-                />
+                />}
               </aside>
               <div className="tour-screen" ref={screenRef}>
                 {tour.screen.kind === 'phone' ? <div className="phone-solo">{phone}</div> : panel}
