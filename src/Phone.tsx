@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MAT, OBJ, REASON } from './data'
 import { fmtDate, planFinish, stageTpl, type Card, type ChatId, type Msg, type State } from './model'
 import { fmtQty, rub } from './parser'
+import type { Hl } from './Guide'
 
 const q = (mat: string, v: number) => fmtQty(v, MAT[mat].unit)
 
@@ -20,9 +21,10 @@ interface Props {
   draftText?: string
   setDraftText?: (t: string) => void
   photoWanted?: boolean
+  hl?: Hl
 }
 
-export function Phone({ s, chat, messages, typing, scriptedTyping, onSend, onPress, onPhoto, chips, draftText, setDraftText, photoWanted }: Props) {
+export function Phone({ s, chat, messages, typing, scriptedTyping, onSend, onPress, onPhoto, chips, draftText, setDraftText, photoWanted, hl }: Props) {
   const list = messages ?? s.chats[chat]
   const ref = useRef<HTMLDivElement>(null)
   const [local, setLocal] = useState('')
@@ -52,7 +54,7 @@ export function Phone({ s, chat, messages, typing, scriptedTyping, onSend, onPre
         </div>
       </div>
       <div className="msgs" ref={ref} role="log" aria-live="polite">
-        {list.map(m => <MessageView key={m.id} m={m} s={s} onPress={onPress} />)}
+        {list.map(m => <MessageView key={m.id} m={m} s={s} onPress={onPress} hl={hl} />)}
         {scriptedTyping && <div className="typing scripted" aria-hidden><span /><span /><span /></div>}
         {typing && <div className="typing" aria-label="Бот печатает"><span /><span /><span /></div>}
       </div>
@@ -60,12 +62,12 @@ export function Phone({ s, chat, messages, typing, scriptedTyping, onSend, onPre
         <>
           {chips && chips.length > 0 && (
             <div className="chips">
-              {chips.map(c => <button key={c.label} className={c.accent ? 'accent' : ''} onClick={c.onClick}>{c.label}</button>)}
+              {chips.map(c => <button key={c.label} className={`${c.accent ? 'accent' : ''} ${hl?.chip === c.label ? 'hl' : ''}`} onClick={c.onClick}>{c.label}</button>)}
             </div>
           )}
           <div className="composer">
             {onPhoto && (
-              <button className={`icon-btn ${photoWanted ? 'attn' : ''}`} onClick={onPhoto} aria-label="Прикрепить фото" title="Прикрепить фото">
+              <button className={`icon-btn ${photoWanted ? 'attn' : ''} ${hl?.attach ? 'hl' : ''}`} onClick={onPhoto} aria-label="Прикрепить фото" title="Прикрепить фото">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7L14 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4L15.5 7.5" /></svg>
               </button>
             )}
@@ -76,7 +78,7 @@ export function Phone({ s, chat, messages, typing, scriptedTyping, onSend, onPre
               placeholder={chat === 'foreman' ? 'Напишите заявку…' : 'Сообщение…'}
               aria-label="Текст сообщения"
             />
-            <button className="icon-btn send" onClick={send} aria-label="Отправить">
+            <button className={`icon-btn send ${hl?.send ? 'hl' : ''}`} onClick={send} aria-label="Отправить">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h15M13 6l6 6-6 6" /></svg>
             </button>
           </div>
@@ -86,7 +88,7 @@ export function Phone({ s, chat, messages, typing, scriptedTyping, onSend, onPre
   )
 }
 
-export function MessageView({ m, s, onPress }: { m: Msg; s: State; onPress?: Props['onPress'] }) {
+export function MessageView({ m, s, onPress, hl }: { m: Msg; s: State; onPress?: Props['onPress']; hl?: Hl }) {
   return (
     <div className={`msg ${m.from}`}>
       {m.photo ? (
@@ -104,7 +106,7 @@ export function MessageView({ m, s, onPress }: { m: Msg; s: State; onPress?: Pro
               {row.map(b => (
                 <button
                   key={b.action}
-                  className={`${b.tone ?? ''} ${m.chosen === b.action ? 'chosen' : ''}`}
+                  className={`${b.tone ?? ''} ${m.chosen === b.action ? 'chosen' : ''} ${!m.used && onPress && hl?.action?.(b.action) ? 'hl' : ''}`}
                   disabled={m.used || !onPress}
                   onClick={() => onPress?.(m, b.action, b.label)}
                 >{b.label}</button>

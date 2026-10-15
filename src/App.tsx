@@ -3,13 +3,9 @@ import { initState, reducer, type Action } from './bot'
 import type { ChatId, Msg, State } from './model'
 import { Panel, type Tab } from './Panel'
 import { MessageView, Phone, type Chip } from './Phone'
+import { currentHl, GuideCard, SAMPLE_LEFTOVERS, SAMPLE_REQUEST, Stepper, STEPS as TOUR } from './Guide'
 
 const STORE_KEY = 'snabagent-demo-v1'
-const SAMPLES = [
-  'На Лесную 12: брус 150 на 150 двадцать штук, доски пятидесятки 2,7 куба, гвозди мешок, пены пару баллонов',
-  'Лесная 14: осб 30 листов, металлочерепица 40 квадратов, конёк 3 штуки',
-  'Лесная 12: саморезы 3 пачки, антисептик канистра, ветрозащита 2 рулона',
-]
 
 function load(): State {
   try {
@@ -67,8 +63,8 @@ export default function App() {
 function Hero() {
   const hero = useMemo(() => {
     let st = initState()
-    st = reducer(st, { type: 'say', chat: 'foreman', text: SAMPLES[0] })
-    st = reducer(st, { type: 'text', chat: 'foreman', text: SAMPLES[0] })
+    st = reducer(st, { type: 'say', chat: 'foreman', text: SAMPLE_REQUEST })
+    st = reducer(st, { type: 'text', chat: 'foreman', text: SAMPLE_REQUEST })
     return st
   }, [])
   const msgs = hero.chats.foreman.slice(1)
@@ -141,21 +137,55 @@ function Chain() {
   )
 }
 
+const GUIDE_KEY = 'snabagent-guide-v1'
+
+function loadGuide(): { mode: 'guided' | 'free'; step: number } {
+  try {
+    const raw = localStorage.getItem(GUIDE_KEY)
+    if (raw) {
+      const g = JSON.parse(raw)
+      if ((g.mode === 'guided' || g.mode === 'free') && Number.isInteger(g.step)) return { mode: g.mode, step: Math.min(Math.max(g.step, 0), TOUR.length - 1) }
+    }
+  } catch { /* без сохранения */ }
+  return { mode: 'guided', step: 0 }
+}
+
 function Demo() {
   const [s, dispatch] = useReducer(reducer, undefined, load)
+  const [guide, setGuide] = useState(loadGuide)
   const [chat, setChat] = useState<ChatId>('foreman')
   const [tab, setTab] = useState<Tab>('house')
   const [houseId, setHouseId] = useState('les12')
   const [text, setText] = useState('')
-  const [sample, setSample] = useState(0)
-  const [sawHouseAfterClose, setSaw] = useState(false)
+  const [opened5, setOpened5] = useState(false)
   const timers = useRef<number[]>([])
+  const screenRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(s)) } catch { /* без сохранения */ }
-  }, [s])
+  const guided = guide.mode === 'guided'
+  const step = guide.step
+  const tour = TOUR[step]
+  const ctx = { s, text, opened5 }
+  const hl = guided ? currentHl(step, ctx) : {}
+  const taskIdx = guided ? tour.tasks(ctx).findIndex(t => !t.done) : -1
+
+  useEffect(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)) } catch { /* без сохранения */ } }, [s])
+  useEffect(() => { try { localStorage.setItem(GUIDE_KEY, JSON.stringify(guide)) } catch { /* без сохранения */ } }, [guide])
   useEffect(() => { if (s.unread[chat] > 0) dispatch({ type: 'seen', chat }) }, [s.unread, chat])
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
+
+  // В пошаговом режиме экран переключает сценарий
+  useEffect(() => {
+    if (!guided) return
+    if (tour.screen.kind === 'phone') setChat(tour.screen.chat)
+    else { setTab(tour.screen.tab); if (tour.screen.tab === 'house') setHouseId('les12') }
+  }, [guided, step, tour])
+
+  // Подсвеченная кнопка в панели может быть ниже края экрана — прокручиваем к ней
+  useEffect(() => {
+    if (!guided || !hl.panel) return
+    const t = window.setTimeout(() => screenRef.current?.querySelector('.panel .hl')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 250)
+    return () => clearTimeout(t)
+  }, [guided, step, taskIdx, hl.panel])
 
   const later = (a: Action, ms: number) => { timers.current.push(window.setTimeout(() => dispatch(a), ms)) }
   const send = (c: ChatId, t: string) => { dispatch({ type: 'say', chat: c, text: t }); later({ type: 'text', chat: c, text: t }, 700) }
@@ -163,90 +193,106 @@ function Demo() {
     dispatch({ type: 'press', chat: c, msgId, action, label })
     later({ type: 'act', chat: c, action }, 380)
   }
+  const restart = () => {
+    timers.current.forEach(clearTimeout)
+    dispatch({ type: 'reset' })
+    setGuide({ mode: 'guided', step: 0 })
+    setChat('foreman'); setTab('house'); setText(''); setOpened5(false)
+  }
 
-  const closedDemo = s.closes.some(c => c.demo)
-  useEffect(() => { if (closedDemo && tab === 'house') setSaw(true) }, [closedDemo, tab])
-
-  const done = [
-    s.reqs.some(r => r.demo),
-    s.lines.some(l => l.demo && ['approved', 'reduced', 'rejected'].includes(l.approval)),
-    s.orders.some(o => o.demo),
-    s.shipments.some(x => x.status !== 'expected'),
-    closedDemo,
-    closedDemo && sawHouseAfterClose,
-  ]
-  const current = done.findIndex(d => !d)
-  const guide: { t: string; h: string; go: () => void }[] = [
-    { t: 'Отправьте заявку', h: 'Чат бригадира: «Пример заявки», затем отправить', go: () => { setChat('foreman'); setText(SAMPLES[0]) } },
-    { t: 'Решите по перерасходу', h: 'Чат руководителя или вкладка «Согласования»', go: () => setChat('director') },
-    { t: 'Закажите материалы', h: 'Панель: «Потребность», затем «Создать заказ»', go: () => setTab('need') },
-    { t: 'Примите с фото', h: '«Отгружено» в заказе, затем приёмка в чате', go: () => { setTab('orders'); setChat('foreman') } },
-    { t: 'Закройте этап', h: 'Чат бригадира: «Закрыть этап», Лесная, 12', go: () => setChat('foreman') },
-    { t: 'Посмотрите дом', h: 'Норма, факт и перерасход по этапам', go: () => { setTab('house'); setHouseId('les12') } },
-  ]
-
+  const closingInput = s.flow.kind === 'closing' && !s.flow.confirmShort
   const pendingShip = s.shipments.filter(x => x.status === 'expected' && (x.objectId === 'les12' || x.objectId === 'les14')).length
   const chips: Chip[] = chat === 'foreman'
     ? [
-        { label: 'Пример заявки', accent: !done[0], onClick: () => { setText(SAMPLES[sample % SAMPLES.length]); setSample(sample + 1) } },
+        closingInput
+          ? { label: 'Вставить остатки', accent: true, onClick: () => setText(SAMPLE_LEFTOVERS) }
+          : { label: 'Вставить пример заявки', accent: !s.reqs.some(r => r.demo), onClick: () => setText(SAMPLE_REQUEST) },
         { label: 'Типовая заявка', onClick: () => press('foreman', 'menu:template', 'Типовая заявка') },
         { label: 'Мои заявки', onClick: () => press('foreman', 'menu:mine', 'Мои заявки') },
-        { label: pendingShip ? `Приёмка (${pendingShip})` : 'Приёмка', accent: pendingShip > 0, onClick: () => press('foreman', 'menu:accept', 'Приёмка') },
-        { label: 'Закрыть этап', accent: done[3] && !done[4], onClick: () => press('foreman', 'menu:close', 'Закрыть этап') },
+        { label: pendingShip ? `Приёмка (${pendingShip})` : 'Приёмка', onClick: () => press('foreman', 'menu:accept', 'Приёмка') },
+        { label: 'Закрыть этап', onClick: () => press('foreman', 'menu:close', 'Закрыть этап') },
       ]
     : [{ label: 'Сводка за день', accent: true, onClick: () => press('director', 'menu:summary', 'Сводка за день') }]
 
+  const phone = (
+    <Phone
+      key={chat}
+      s={s}
+      chat={chat}
+      typing={s.typing[chat]}
+      onSend={t => send(chat, t)}
+      onPress={(m, a, label) => press(chat, a, label, m.id)}
+      onPhoto={chat === 'foreman' ? () => press('foreman', 'photo', 'Фото') : undefined}
+      photoWanted={chat === 'foreman' && s.flow.kind === 'acceptPhoto'}
+      chips={chips}
+      draftText={chat === 'foreman' ? text : undefined}
+      setDraftText={chat === 'foreman' ? setText : undefined}
+      hl={hl}
+    />
+  )
+  const panel = (
+    <Panel s={s} dispatch={dispatch} tab={tab} setTab={setTab} houseId={houseId} setHouseId={setHouseId}
+      hl={hl} only={guided} onOpenStage={st => { if (st === 5) setOpened5(true) }} />
+  )
   const other: ChatId = chat === 'foreman' ? 'director' : 'foreman'
+
   return (
     <section className="demo" id="demo">
       <div className="wrap">
         <div className="demo-head">
           <div>
-            <h2>Попробуйте весь путь заявки</h2>
-            <p>Слева — чаты бригадира и руководителя в Max, справа — веб-панель снабженца и карточка дома. Всё связано: отправьте заявку, и она появится в панели. Шаги ниже подсказывают порядок, но можно действовать как угодно.</p>
+            <h2>Пройдите путь одной заявки</h2>
+            <p>{guided
+              ? 'Девять коротких шагов: от сообщения бригадира в Max до перерасхода в рублях по дому. На каждом шаге написано, кто вы и что сделать, нужная кнопка подсвечена, а после действия видно, что произошло в системе.'
+              : 'Свободный режим: слева чаты бригадира и руководителя в Max, справа веб-панель. Действуйте в любом порядке.'}</p>
           </div>
-          <button className="btn small" onClick={() => { timers.current.forEach(clearTimeout); dispatch({ type: 'reset' }); setChat('foreman'); setTab('house'); setSaw(false) }}>Начать заново</button>
-        </div>
-
-        <div className="guide" role="list" aria-label="Сценарий показа">
-          {guide.map((g, i) => (
-            <button key={g.t} role="listitem" className={`gstep ${done[i] ? 'done' : ''} ${i === current ? 'current' : ''}`} onClick={g.go}>
-              <span className="n">{done[i] ? '✓' : `Шаг ${i + 1}`}{i === current ? ' — сейчас' : ''}</span>
-              <span className="t">{g.t}</span>
-              <span className="h">{g.h}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="bench">
-          <div className="phone-col">
-            <div className="role-row">
-              <div className="seg" role="group" aria-label="Чей чат">
-                <button aria-pressed={chat === 'foreman'} onClick={() => setChat('foreman')}>
-                  Бригадир{chat !== 'foreman' && s.unread.foreman > 0 && <span className="badge">{s.unread.foreman}</span>}
-                </button>
-                <button aria-pressed={chat === 'director'} onClick={() => setChat('director')}>
-                  Руководитель{chat !== 'director' && s.unread.director > 0 && <span className="badge">{s.unread.director}</span>}
-                </button>
-              </div>
-              {s.unread[other] > 0 && <span className="hint">новое в другом чате</span>}
+          <div className="demo-ctl">
+            <div className="seg" role="group" aria-label="Режим демо">
+              <button aria-pressed={guided} onClick={() => setGuide({ ...guide, mode: 'guided' })}>Пошагово</button>
+              <button aria-pressed={!guided} onClick={() => setGuide({ ...guide, mode: 'free' })}>Свободно</button>
             </div>
-            <Phone
-              key={chat}
-              s={s}
-              chat={chat}
-              typing={s.typing[chat]}
-              onSend={t => send(chat, t)}
-              onPress={(m, a, label) => press(chat, a, label, m.id)}
-              onPhoto={chat === 'foreman' ? () => press('foreman', 'photo', 'Фото') : undefined}
-              photoWanted={chat === 'foreman' && s.flow.kind === 'acceptPhoto'}
-              chips={chips}
-              draftText={chat === 'foreman' ? text : undefined}
-              setDraftText={chat === 'foreman' ? setText : undefined}
-            />
+            <button className="btn small" onClick={restart}>Начать заново</button>
           </div>
-          <Panel s={s} dispatch={dispatch} tab={tab} setTab={setTab} houseId={houseId} setHouseId={setHouseId} />
         </div>
+
+        {guided ? (
+          <>
+            <Stepper step={step} maxDone={step} />
+            <div className="tour">
+              <aside className="tour-guide">
+                <GuideCard
+                  step={step}
+                  ctx={ctx}
+                  onNext={() => { setGuide({ ...guide, step: step + 1 }); document.querySelector('.stepper')?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }}
+                  onRestart={restart}
+                  onFree={() => setGuide({ ...guide, mode: 'free' })}
+                  onGoto={i => setGuide({ ...guide, step: i })}
+                />
+              </aside>
+              <div className="tour-screen" ref={screenRef}>
+                {tour.screen.kind === 'phone' ? <div className="phone-solo">{phone}</div> : panel}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="bench" ref={screenRef}>
+            <div className="phone-col">
+              <div className="role-row">
+                <div className="seg" role="group" aria-label="Чей чат">
+                  <button aria-pressed={chat === 'foreman'} onClick={() => setChat('foreman')}>
+                    Бригадир{chat !== 'foreman' && s.unread.foreman > 0 && <span className="badge">{s.unread.foreman}</span>}
+                  </button>
+                  <button aria-pressed={chat === 'director'} onClick={() => setChat('director')}>
+                    Руководитель{chat !== 'director' && s.unread.director > 0 && <span className="badge">{s.unread.director}</span>}
+                  </button>
+                </div>
+                {s.unread[other] > 0 && <span className="hint">новое в другом чате</span>}
+              </div>
+              {phone}
+            </div>
+            {panel}
+          </div>
+        )}
       </div>
     </section>
   )

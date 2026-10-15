@@ -6,6 +6,7 @@ import {
   type ReqLine, type State,
 } from './model'
 import { fmtQty, rub } from './parser'
+import type { Hl } from './Guide'
 
 export type Tab = 'house' | 'need' | 'orders' | 'requests' | 'approvals'
 
@@ -18,9 +19,12 @@ interface Props {
   setTab: (t: Tab) => void
   houseId: string
   setHouseId: (id: string) => void
+  hl?: Hl
+  onOpenStage?: (stage: number | null) => void
+  only?: boolean // пошаговый режим: вкладки переключает сценарий
 }
 
-export function Panel({ s, dispatch, tab, setTab, houseId, setHouseId }: Props) {
+export function Panel({ s, dispatch, tab, setTab, houseId, setHouseId, hl, onOpenStage, only }: Props) {
   const needCount = s.lines.filter(l => availableQty(l) > 0).length
   const apprCount = s.lines.filter(l => l.approval === 'pending' || l.approval === 'retro').length
   const tabs: [Tab, string, number?][] = [
@@ -35,15 +39,15 @@ export function Panel({ s, dispatch, tab, setTab, houseId, setHouseId }: Props) 
       <div className="panel-top" role="tablist">
         <span className="who">Веб-панель</span>
         {tabs.map(([id, label, n]) => (
-          <button key={id} className="tab" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
+          <button key={id} className="tab" role="tab" aria-selected={tab === id} disabled={only && tab !== id} onClick={() => setTab(id)}>
             {label}{n ? <span className="badge">{n}</span> : null}
           </button>
         ))}
       </div>
       <div className="panel-body">
-        {tab === 'house' && <House s={s} id={houseId} setId={setHouseId} />}
-        {tab === 'need' && <Need s={s} dispatch={dispatch} />}
-        {tab === 'orders' && <Orders s={s} dispatch={dispatch} />}
+        {tab === 'house' && <House s={s} id={houseId} setId={setHouseId} hl={hl} onOpenStage={onOpenStage} />}
+        {tab === 'need' && <Need s={s} dispatch={dispatch} hl={hl} />}
+        {tab === 'orders' && <Orders s={s} dispatch={dispatch} hl={hl} />}
         {tab === 'requests' && <Requests s={s} />}
         {tab === 'approvals' && <Approvals s={s} dispatch={dispatch} />}
       </div>
@@ -86,9 +90,10 @@ function RulerLegend() {
 
 // ---------- Карточка дома ----------
 
-function House({ s, id, setId }: { s: State; id: string; setId: (id: string) => void }) {
+function House({ s, id, setId, hl, onOpenStage }: { s: State; id: string; setId: (id: string) => void; hl?: Hl; onOpenStage?: (stage: number | null) => void }) {
   const o = OBJ[id]
-  const [open, setOpen] = useState<number | null>(s.activeStage[id])
+  const [open, setOpenRaw] = useState<number | null>(hl?.panel === 'stage5' ? null : s.activeStage[id])
+  const setOpen = (v: number | null) => { setOpenRaw(v); onOpenStage?.(id === 'les12' ? v : null) }
   const stats = PROJECT.stages.map(st => stageStats(s, id, st.no))
   const sum = (k: keyof (typeof stats)[number]) => stats.reduce((a, x) => a + (x[k] as number), 0)
   const norm = sum('normRub'), ordered = sum('orderedRub'), received = sum('receivedRub'), consumed = sum('consumedRub'), over = sum('overRub')
@@ -132,7 +137,7 @@ function House({ s, id, setId }: { s: State; id: string; setId: (id: string) => 
           <tbody>
             {stats.map(x => (
               <Fragment key={x.stage}>
-                <tr className={`stage-row ${open === x.stage ? 'open' : ''}`} onClick={() => setOpen(open === x.stage ? null : x.stage)} aria-expanded={open === x.stage}>
+                <tr className={`stage-row ${open === x.stage ? 'open' : ''} ${hl?.panel === 'stage5' && id === 'les12' && x.stage === 5 ? 'hl' : ''}`} onClick={() => setOpen(open === x.stage ? null : x.stage)} aria-expanded={open === x.stage}>
                   <td>{x.stage}. {stageTpl(x.stage).name}</td>
                   <td><span className={`st-pill ${x.status}`}>{x.status === 'closed' ? 'закрыт' : x.status === 'active' ? 'идёт' : `с ${fmtDate(planStart(id, x.stage))}`}</span></td>
                   <td>{rub(x.normRub)}</td>
@@ -223,7 +228,7 @@ function supplierFor(mat: string) {
   return SUPPLIERS.find(x => x.categories.includes(MAT[mat].category))?.id ?? SUPPLIERS[0].id
 }
 
-function Need({ s, dispatch }: { s: State; dispatch: (a: Action) => void }) {
+function Need({ s, dispatch, hl }: { s: State; dispatch: (a: Action) => void; hl?: Hl }) {
   const groups = useMemo(() => {
     const m = new Map<string, ReqLine[]>()
     for (const l of s.lines) if (availableQty(l) > 0 || l.approval === 'pending') {
@@ -244,7 +249,7 @@ function Need({ s, dispatch }: { s: State; dispatch: (a: Action) => void }) {
     return (
       <>
         <ViewTitle title="Сводная потребность" text="Строки заявок со всех объектов, готовые к закупке, собраны по материалам." />
-        <div className="empty"><b>Нечего закупать</b>Отправьте заявку от бригадира в чате слева — её строки появятся здесь.</div>
+        <div className="empty"><b>Сейчас нечего закупать</b>{s.orders.some(o => o.demo) ? 'Всё заказано. Новые заявки бригадиров появятся здесь сами.' : 'Отправьте заявку от бригадира в чате — её строки появятся здесь.'}</div>
       </>
     )
   }
@@ -280,7 +285,7 @@ function Need({ s, dispatch }: { s: State; dispatch: (a: Action) => void }) {
             {donors.map(o => (
               <div className="surplus" key={o.id}>
                 <span>На {o.name} лишние {q(mat, surplus(s, o.id, mat))} после закрытых этапов — можно перевезти вместо покупки.</span>
-                <button className="btn small" onClick={() => dispatch({ type: 'transfer', from: o.id, mat, lineIds: lines.map(l => l.id) })}>Переместить</button>
+                <button className={`btn small ${hl?.panel === 'transfer' ? 'hl' : ''}`} onClick={() => dispatch({ type: 'transfer', from: o.id, mat, lineIds: lines.map(l => l.id) })}>Переместить</button>
               </div>
             ))}
           </div>
@@ -288,11 +293,12 @@ function Need({ s, dispatch }: { s: State; dispatch: (a: Action) => void }) {
       })}
       <div className="orderbar">
         <span>{selected.length ? `Выбрано материалов: ${selected.length}` : 'Отметьте материалы для заказа'}</span>
+        <button className={`btn small ${hl?.panel === 'order' && !selected.length ? 'hl' : ''}`} onClick={() => setSel(new Set(groups.filter(([, ls]) => ls.some(l => availableQty(l) > 0)).map(([m]) => m)))}>Отметить всё</button>
         <select value={supplier} onChange={e => setSup(e.target.value)} aria-label="Поставщик">
           {SUPPLIERS.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
         <button
-          className="btn primary small"
+          className={`btn primary small ${hl?.panel === 'order' && selected.length ? 'hl' : ''}`}
           disabled={!selected.length}
           onClick={() => {
             dispatch({ type: 'order', supplierId: supplier, lineIds: selected.flatMap(([, ls]) => ls.map(l => l.id)) })
@@ -319,7 +325,7 @@ function downloadCsv(s: State, orderNo: number) {
   URL.revokeObjectURL(a.href)
 }
 
-function Orders({ s, dispatch }: { s: State; dispatch: (a: Action) => void }) {
+function Orders({ s, dispatch, hl }: { s: State; dispatch: (a: Action) => void; hl?: Hl }) {
   const orders = [...s.orders].reverse()
   const transfers = s.shipments.filter(x => x.transferFrom)
   return (
@@ -355,7 +361,7 @@ function Orders({ s, dispatch }: { s: State; dispatch: (a: Action) => void }) {
             ))}
             <div className="actions">
               <button className="btn small" onClick={() => downloadCsv(s, o.no)}>Скачать для поставщика (Excel)</button>
-              {o.status === 'sent' && <button className="btn small primary" onClick={() => dispatch({ type: 'ship', orderNo: o.no })}>Отгружено на объект</button>}
+              {o.status === 'sent' && <button className={`btn small primary ${hl?.panel === 'ship' ? 'hl' : ''}`} onClick={() => dispatch({ type: 'ship', orderNo: o.no })}>Отгружено на объект</button>}
             </div>
           </div>
         )
